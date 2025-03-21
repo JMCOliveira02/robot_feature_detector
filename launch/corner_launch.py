@@ -27,7 +27,7 @@ def generate_launch_description():
         package="rviz2",
         executable="rviz2",
         name="rviz2",
-        arguments=["-d", os.path.join(this_package_dir, "rviz", "controller_lidar.rviz")],
+        arguments=["-d", os.path.join(this_package_dir, "rviz", "corners_lidar.rviz")],
         output="screen"
     )
 
@@ -39,7 +39,14 @@ def generate_launch_description():
         prefix="gnome-terminal --",
     )
 
-    tf_static = Node(
+    corner_detector = Node(
+        package="robot_feature_detector",
+        executable="corners",
+        name="corners",
+        output="screen"
+    )
+
+    tf_static_odom = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
         name="map_to_odom_broadcaster",
@@ -53,26 +60,13 @@ def generate_launch_description():
         arguments=["0", "0", "0", "0", "0", "0", "base_link", "lidar2D"]
     )
 
-    corner_detector = Node(
-        package="robot_feature_detector",
-        executable="corners",
-        name="corners",
-        output="screen"
-    )
-
 
     return LaunchDescription([
-        tf_static,
-        tf_static_lidar,
-        rviz,
+        corner_detector,
         webots,
         my_robot_driver,
+        tf_static_odom,
+        tf_static_lidar,
         teleop,
-        launch.actions.RegisterEventHandler(
-            event_handler=launch.event_handlers.OnProcessExit(
-                target_action=webots,
-                on_exit=[launch.actions.EmitEvent(event=launch.events.Shutdown())],
-            )
-        ),
-        corner_detector
+        rviz
     ])
