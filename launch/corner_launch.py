@@ -36,7 +36,7 @@ def generate_launch_description():
         executable="teleop_twist_keyboard",
         name="teleop_twist_keyboard",
         output="screen",
-        prefix="gnome-terminal --",
+        prefix="gnome-terminal --tab --",
     )
 
     corner_detector = Node(

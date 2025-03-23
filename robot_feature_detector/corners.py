@@ -1,12 +1,14 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
+from builtin_interfaces.msg import Time
 import sensor_msgs_py.point_cloud2 as pc2
 import numpy as np
 from skimage.measure import ransac, LineModelND
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 import time
 
 
@@ -29,9 +31,21 @@ class PointCloudSubscriber(Node):
             self.listener_callback,
             1)
 
-        self.marker_publisher = self.create_publisher(
+        self.corner_publisher = self.create_publisher(
             Marker,
             '/corners',
+            1
+        )
+
+        self.anchor_publisher = self.create_publisher(
+            Marker,
+            '/anchor_points',
+            1
+        )
+
+        self.corner_orientation_publisher = self.create_publisher(
+            MarkerArray,
+            '/orientated_corners',
             1
         )
 
@@ -69,6 +83,16 @@ class PointCloudSubscriber(Node):
 
     min_samples = 5
     debug = False
+
+    def save_point_cloud(self, filename):
+        np.save(f"/home/joao/ros2_ws/src/robot_feature_detector/robot_feature_detector/pcl/{filename}.npy", self.point_cloud_numpy)
+    
+    
+    def listener_callback(self, point_cloud: PointCloud2):
+
+        self.point_cloud_numpy = self.convert_point_cloud_msg_to_numpy(point_cloud)
+        self.extract_publish_corners()
+
 
     def extract_first_ransac_line(self, data_points, max_distance:int):
         inliers = []
@@ -129,23 +153,62 @@ class PointCloudSubscriber(Node):
                     print(length)
         return models, models_points_start, models_points_end
     
-    endpoint_threshold = 0.1
 
-    def dist(point_1, point_2):
+    def dist(self, point_1, point_2):
         return np.linalg.norm(np.array(point_1) - np.array(point_2))
 
-    def get_opening_angle(self, corner, models_points_start, models_points_end):
-        #distance between corner and start of line
-        if self.dist(corner, models_points_start[0]) > self.dist(corner, models_points_end[0]):
-            anchor_1 = models_points_start[0]
-        else:
-            anchor_1 = models_points_end[0]
+    def get_corners_orientations(self, corner_list, lines_start, lines_end):
+        
+        orientations = []
+        anchor_points = []
+        # Find the anchor points of the corner (the points on the walls)
+        for i in range(0, len(corner_list)):
+            if self.dist(corner_list[i], lines_start[i, 0]) > self.dist(corner_list[i], lines_end[i, 0]):
+                anchor_1 = lines_start[i, 0]
+            else:
+                anchor_1 = lines_end[i, 0]
 
-        if self.dist(corner, models_points_start[1]) > self.dist(corner, models_points_end[1]):
-            anchor_2 = models_points_start[1]
-        else:
-            anchor_2 = models_points_end[1]
+            if self.dist(corner_list[i], lines_start[i, 1]) > self.dist(corner_list[i], lines_end[i, 1]):
+                anchor_2 = lines_start[i, 1]
+            else:
+                anchor_2 = lines_end[i, 1]
+            
+            anchor_points.append(anchor_1)
+            anchor_points.append(anchor_2)
 
+            # Determine if corner is an innie (acute facing angle) or an outie (obtuse facing angle)
+            origin = np.array((0, 0))
+            if self.dist(origin, anchor_1) < self.dist(origin, corner_list[i]) or self.dist(origin, anchor_2) < self.dist(origin, corner_list[i]):
+                innie = True
+            else:
+                innie = False
+
+            # Calculate the angle between the two lines
+            vector_1 = np.array(corner_list[i]) - np.array(anchor_1)
+            vector_2 = np.array(corner_list[i]) - np.array(anchor_2)
+
+            versor_1 = vector_1 / np.linalg.norm(vector_1)
+            versor_2 = vector_2 / np.linalg.norm(vector_2)
+
+            versor_mid = (versor_1 + versor_2)
+            versor_mid = versor_mid / np.linalg.norm(versor_mid)
+
+            angle_mid = np.arctan2(versor_mid[1], versor_mid[0])
+
+            if angle_mid < - np.pi:
+                angle_mid += 2 * np.pi
+            elif angle_mid > np.pi:
+                angle_mid -= 2 * np.pi
+
+
+            orientations.append(angle_mid)
+        
+        return orientations, anchor_points
+
+            
+
+
+    endpoint_threshold = 0.1
 
     def is_point_close_to_endpoints(self, point, start, end):
         px, py = point
@@ -159,7 +222,8 @@ class PointCloudSubscriber(Node):
     
     def find_intersection(self, models, models_points_start, models_points_end):
         intersection_points = []
-        intersection_lines = []
+        lines_start = []
+        lines_end = []
         for i in range(len(models)):
             for j in range(i, len(models)):
                 if (i == j):
@@ -176,7 +240,8 @@ class PointCloudSubscriber(Node):
                     intersection = p1 + t[0] * d1
                     if self.is_point_close_to_endpoints(intersection, models_points_start[i], models_points_end[i]) and self.is_point_close_to_endpoints(intersection, models_points_start[j], models_points_end[j]):
                         intersection_points.append(intersection)
-                        intersection_lines.append((models[i], models[j]))
+                        lines_start.append((models_points_start[i], models_points_start[j]))
+                        lines_end.append((models_points_end[i], models_points_end[j]))
                     elif self.debug:
                         print("INTERSECTION TOO FAR FROM ENDPOINTS")
                         print(intersection)
@@ -186,17 +251,31 @@ class PointCloudSubscriber(Node):
                         print(models_points_end[j])
                 except np.linalg.LinAlgError:
                     continue
-        return np.array(intersection_points), 
+        return np.array(intersection_points), np.array(lines_start), np.array(lines_end)
 
+    def publish_anchors(self):
+        marker = Marker()
+        marker.header.frame_id = "lidar2D"
+        marker.type = Marker.SPHERE_LIST
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = float(1)
+        marker.scale.x = float(0.03)
+        marker.scale.y = float(0.03)
+        marker.scale.z = float(0.03)
+        marker.color.a = float(1)
+        marker.color.r = float(0)
+        marker.color.g = float(1)
+        marker.color.b = float(0)
+        marker.points = []
 
-    def save_point_cloud(self, filename):
-        np.save(f"/home/joao/ros2_ws/src/robot_feature_detector/robot_feature_detector/pcl/{filename}.npy", self.point_cloud_numpy)
-    
-    
-    def listener_callback(self, point_cloud: PointCloud2):
-
-        self.point_cloud_numpy = self.convert_point_cloud_msg_to_numpy(point_cloud)
-        self.extract_publish_corners()
+        for point in self.anchor_points:
+            point_ = Point()
+            point_.x = float(point[0])
+            point_.y = float(point[1])
+            point_.z = float(0)
+            marker.points.append(point_)
+            
+        self.anchor_publisher.publish(marker)
 
     def publish_corners(self):
         marker = Marker()
@@ -204,9 +283,9 @@ class PointCloudSubscriber(Node):
         marker.type = Marker.SPHERE_LIST
         marker.action = Marker.ADD
         marker.pose.orientation.w = float(1)
-        marker.scale.x = 0.1
-        marker.scale.y = 0.1
-        marker.scale.z = 0.1
+        marker.scale.x = float(0.05)
+        marker.scale.y = float(0.05)
+        marker.scale.z = float(0.05)
         marker.color.a = float(1)
         marker.color.r = float(1)
         marker.color.g = float(0)
@@ -220,7 +299,45 @@ class PointCloudSubscriber(Node):
             point_.z = float(0)
             marker.points.append(point_)
             
-        self.marker_publisher.publish(marker)
+        self.corner_publisher.publish(marker)
+    
+    def publish_orientated_corners(self):
+        markerArray = MarkerArray()
+        markerArray.markers = []
+
+        for i in range(0, len(self.intersection_points)):
+            self.get_logger().info(f"Corner {i} publishing")
+            marker = Marker()
+            marker.header.frame_id = "lidar2D"
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.id = i
+            marker.ns = "orientations"
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            theta = self.corner_orientations[i]
+            self.get_logger().info(f"theta: {theta}")
+            q = R.from_euler('z', theta).as_quat()  # Returns [x, y, z, w]
+            marker.pose.orientation.x = q[0]
+            marker.pose.orientation.y = q[1]
+            marker.pose.orientation.z = q[2]
+            marker.pose.orientation.w = q[3]
+            marker.pose.orientation.z = float(1)
+            marker.pose.orientation.x = float(0)
+            marker.pose.orientation.y = float(0)
+            marker.pose.position.x = float(self.intersection_points[i, 0])
+            marker.pose.position.y = float(self.intersection_points[i, 1])
+            marker.pose.position.z = float(0)
+            marker.scale.x = float(0.1)
+            marker.scale.y = float(0.03)
+            marker.scale.z = float(0.03)
+            marker.color.a = float(1)
+            marker.color.r = float(1)
+            marker.color.g = float(0)
+            marker.color.b = float(0)
+            markerArray.markers.append(marker)
+            self.get_logger().info(f"markerArray size: {len(markerArray.markers)}")
+        
+        self.corner_orientation_publisher.publish(markerArray)
 
     def extract_publish_corners(self):
         while np.isnan(self.point_cloud_numpy).any() or np.isinf(self.point_cloud_numpy).any():
@@ -233,8 +350,11 @@ class PointCloudSubscriber(Node):
         #self.plot_point_cloud()
         
         models, models_start, models_end = self.extract_lines_from_point_cloud()
-        self.intersection_points = self.find_intersection(models, models_start, models_end)
+        self.intersection_points, corner_lines_start, corner_lines_end = self.find_intersection(models, models_start, models_end)
+        self.corner_orientations, self.anchor_points = self.get_corners_orientations(self.intersection_points, corner_lines_start, corner_lines_end)
         self.publish_corners()
+        self.publish_anchors()
+        self.publish_orientated_corners()
 
 
     def convert_point_cloud_msg_to_numpy(self, msg: PointCloud2):
