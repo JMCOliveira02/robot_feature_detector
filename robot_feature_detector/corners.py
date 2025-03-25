@@ -12,6 +12,7 @@ from scipy.spatial.transform import Rotation as R
 import time
 
 
+
 class PointCloudSubscriber(Node):
 
     def __init__(self):
@@ -49,6 +50,8 @@ class PointCloudSubscriber(Node):
             1
         )
 
+        self.timer = self.create_timer(1, self.extract_publish_corners)
+
     def plot_point_cloud_with_corners(self, intersection_points):
         x = self.point_cloud_numpy_copy[:, 0]
         y = self.point_cloud_numpy_copy[:, 1]
@@ -81,23 +84,38 @@ class PointCloudSubscriber(Node):
         plt.axis('equal') 
         plt.show()
 
-    min_samples = 5
-    debug = False
 
     def save_point_cloud(self, filename):
         np.save(f"/home/joao/ros2_ws/src/robot_feature_detector/robot_feature_detector/pcl/{filename}.npy", self.point_cloud_numpy)
     
-    
     def listener_callback(self, point_cloud: PointCloud2):
 
         self.point_cloud_numpy = self.convert_point_cloud_msg_to_numpy(point_cloud)
-        self.extract_publish_corners()
+        #self.extract_publish_corners()
 
+    def extract_publish_corners(self):
+        while np.isnan(self.point_cloud_numpy).any() or np.isinf(self.point_cloud_numpy).any():
+            self.get_logger().warn("Point cloud contains NaN or Inf values!")
+            self.point_cloud_numpy = self.point_cloud_numpy[~np.isnan(self.point_cloud_numpy).any(axis=1)]
+            self.point_cloud_numpy = self.point_cloud_numpy[~np.isinf(self.point_cloud_numpy).any(axis=1)]
+
+            self.get_logger().info("Point cloud is valid, running RANSAC...")
+
+        #self.plot_point_cloud()
+        
+        models, models_start, models_end = self.extract_lines_from_point_cloud()
+        self.intersection_points, corner_lines_start, corner_lines_end = self.find_intersection(models, models_start, models_end)
+        self.corner_orientations, self.anchor_points = self.get_corners_orientations(self.intersection_points, corner_lines_start, corner_lines_end)
+        self.publish_corners()
+        self.publish_anchors()
+        self.publish_orientated_corners()
+
+    
 
     def extract_first_ransac_line(self, data_points, max_distance:int):
         inliers = []
         model_robust, inliers = ransac(data_points, LineModelND, min_samples= self.min_samples,
-                                    residual_threshold=max_distance, max_trials=1000)
+                                    residual_threshold=max_distance, max_trials=100)
         results_inliers=[]
         results_inliers_removed=[]
         if(inliers is not None):
@@ -112,48 +130,54 @@ class PointCloudSubscriber(Node):
 
         return np.array(results_inliers), np.array(results_inliers_removed), model_robust
 
+    debug = False
+    min_samples = 5
+
     max_distance = 0.01
     iterations = 15
 
-    gap_threshold = 1.5
-    min_length = 0.4
+    gap_threshold = 0.3
+    min_length = 0.5
 
     def extract_lines_from_point_cloud(self):
         models = []
         models_points_start = []
         models_points_end = []
         for index in range(0, self.iterations):
-                if (len(self.point_cloud_numpy) < self.min_samples):
-                    break
-                inlier_points, inliers_removed_from_starting, model = self.extract_first_ransac_line(self.point_cloud_numpy, max_distance=self.max_distance)
-                self.point_cloud_numpy=inliers_removed_from_starting
-                if (len(inlier_points) < self.min_samples):
-                    break
-                p0, direction = model.params
-                projections = np.dot(inlier_points - p0, direction)
-                projections_sorted = np.sort(projections)
-                max_gap = np.max(np.diff(projections_sorted))
-                min_proj = np.min(projections)
-                max_proj = np.max(projections)
-                start_point = p0 + min_proj * direction
-                end_point = p0 + max_proj * direction
-                length = np.linalg.norm(end_point - start_point)
-                if self.debug:
-                    print("TESTING LINE")
-                if length > self.min_length:
-                    if max_gap < self.gap_threshold:
-                        models_points_start.append(start_point)
-                        models_points_end.append(end_point)
-                        models.append(model)
-                    elif self.debug:
-                        print("GAP TOO BIG: ")
-                        print(max_gap)
+
+            self.get_logger().info(f"Pcl size: {len(self.point_cloud_numpy)}")
+
+                
+            if (len(self.point_cloud_numpy) < self.min_samples):
+                break
+            inlier_points, inliers_removed_from_starting, model = self.extract_first_ransac_line(self.point_cloud_numpy, max_distance=self.max_distance)
+            self.point_cloud_numpy=inliers_removed_from_starting
+            if (len(inlier_points) < self.min_samples):
+                break
+            p0, direction = model.params
+            projections = np.dot(inlier_points - p0, direction)
+            projections_sorted = np.sort(projections)
+            max_gap = np.max(np.diff(projections_sorted))
+            min_proj = np.min(projections)
+            max_proj = np.max(projections)
+            start_point = p0 + min_proj * direction
+            end_point = p0 + max_proj * direction
+            length = np.linalg.norm(end_point - start_point)
+            if self.debug:
+                print("TESTING LINE")
+            if length > self.min_length:
+                if max_gap < self.gap_threshold:
+                    models_points_start.append(start_point)
+                    models_points_end.append(end_point)
+                    models.append(model)
                 elif self.debug:
-                    print("NOT LONG ENOUGH: ")
-                    print(length)
+                    print("GAP TOO BIG: ")
+                    print(max_gap)
+            elif self.debug:
+                print("NOT LONG ENOUGH: ")
+                print(length)
         return models, models_points_start, models_points_end
     
-
     def dist(self, point_1, point_2):
         return np.linalg.norm(np.array(point_1) - np.array(point_2))
 
@@ -184,14 +208,13 @@ class PointCloudSubscriber(Node):
                 innie = False
 
             # Calculate the angle between the two lines
-            vector_1 = np.array(corner_list[i]) - np.array(anchor_1)
-            vector_2 = np.array(corner_list[i]) - np.array(anchor_2)
+            vector_1 =  np.array(anchor_1) - np.array(corner_list[i])
+            vector_2 =  np.array(anchor_2) - np.array(corner_list[i])
 
             versor_1 = vector_1 / np.linalg.norm(vector_1)
             versor_2 = vector_2 / np.linalg.norm(vector_2)
 
             versor_mid = (versor_1 + versor_2)
-            versor_mid = versor_mid / np.linalg.norm(versor_mid)
 
             angle_mid = np.arctan2(versor_mid[1], versor_mid[0])
 
@@ -205,10 +228,7 @@ class PointCloudSubscriber(Node):
         
         return orientations, anchor_points
 
-            
-
-
-    endpoint_threshold = 0.1
+    endpoint_threshold = 0.2
 
     def is_point_close_to_endpoints(self, point, start, end):
         px, py = point
@@ -253,6 +273,30 @@ class PointCloudSubscriber(Node):
                     continue
         return np.array(intersection_points), np.array(lines_start), np.array(lines_end)
 
+    def publish_corners(self):
+        marker = Marker()
+        marker.header.frame_id = "lidar2D"
+        marker.type = Marker.SPHERE_LIST
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = float(1)
+        marker.scale.x = float(0.05)
+        marker.scale.y = float(0.05)
+        marker.scale.z = float(0.05)
+        marker.color.a = float(1)
+        marker.color.r = float(1)
+        marker.color.g = float(0)
+        marker.color.b = float(0)
+        marker.points = []
+
+        for point in self.intersection_points:
+            point_ = Point()
+            point_.x = float(point[0])
+            point_.y = float(point[1])
+            point_.z = float(0)
+            marker.points.append(point_)
+            
+        self.corner_publisher.publish(marker)
+
     def publish_anchors(self):
         marker = Marker()
         marker.header.frame_id = "lidar2D"
@@ -277,30 +321,6 @@ class PointCloudSubscriber(Node):
             
         self.anchor_publisher.publish(marker)
 
-    def publish_corners(self):
-        marker = Marker()
-        marker.header.frame_id = "lidar2D"
-        marker.type = Marker.SPHERE_LIST
-        marker.action = Marker.ADD
-        marker.pose.orientation.w = float(1)
-        marker.scale.x = float(0.05)
-        marker.scale.y = float(0.05)
-        marker.scale.z = float(0.05)
-        marker.color.a = float(1)
-        marker.color.r = float(1)
-        marker.color.g = float(0)
-        marker.color.b = float(0)
-        marker.points = []
-
-        for point in self.intersection_points:
-            point_ = Point()
-            point_.x = float(point[0])
-            point_.y = float(point[1])
-            point_.z = float(0)
-            marker.points.append(point_)
-            
-        self.corner_publisher.publish(marker)
-    
     def publish_orientated_corners(self):
         markerArray = MarkerArray()
         markerArray.markers = []
@@ -309,21 +329,17 @@ class PointCloudSubscriber(Node):
             self.get_logger().info(f"Corner {i} publishing")
             marker = Marker()
             marker.header.frame_id = "lidar2D"
-            marker.header.stamp = self.get_clock().now().to_msg()
             marker.id = i
             marker.ns = "orientations"
             marker.type = Marker.ARROW
             marker.action = Marker.ADD
             theta = self.corner_orientations[i]
             self.get_logger().info(f"theta: {theta}")
-            q = R.from_euler('z', theta).as_quat()  # Returns [x, y, z, w]
+            q = R.from_euler('z', theta).as_quat()
             marker.pose.orientation.x = q[0]
             marker.pose.orientation.y = q[1]
             marker.pose.orientation.z = q[2]
             marker.pose.orientation.w = q[3]
-            marker.pose.orientation.z = float(1)
-            marker.pose.orientation.x = float(0)
-            marker.pose.orientation.y = float(0)
             marker.pose.position.x = float(self.intersection_points[i, 0])
             marker.pose.position.y = float(self.intersection_points[i, 1])
             marker.pose.position.z = float(0)
@@ -338,24 +354,6 @@ class PointCloudSubscriber(Node):
             self.get_logger().info(f"markerArray size: {len(markerArray.markers)}")
         
         self.corner_orientation_publisher.publish(markerArray)
-
-    def extract_publish_corners(self):
-        while np.isnan(self.point_cloud_numpy).any() or np.isinf(self.point_cloud_numpy).any():
-            self.get_logger().warn("Point cloud contains NaN or Inf values!")
-            self.point_cloud_numpy = self.point_cloud_numpy[~np.isnan(self.point_cloud_numpy).any(axis=1)]
-            self.point_cloud_numpy = self.point_cloud_numpy[~np.isinf(self.point_cloud_numpy).any(axis=1)]
-
-            self.get_logger().info("Point cloud is valid, running RANSAC...")
-
-        #self.plot_point_cloud()
-        
-        models, models_start, models_end = self.extract_lines_from_point_cloud()
-        self.intersection_points, corner_lines_start, corner_lines_end = self.find_intersection(models, models_start, models_end)
-        self.corner_orientations, self.anchor_points = self.get_corners_orientations(self.intersection_points, corner_lines_start, corner_lines_end)
-        self.publish_corners()
-        self.publish_anchors()
-        self.publish_orientated_corners()
-
 
     def convert_point_cloud_msg_to_numpy(self, msg: PointCloud2):
         """Convert PointCloud2 message to a NumPy array with only x, y coordinates."""
