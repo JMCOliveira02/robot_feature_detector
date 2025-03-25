@@ -9,10 +9,10 @@ Panels:
         - /TF1
         - /TF1/Frames1
         - /Marker1
-        - /Marker1/Topic1
         - /PointCloud21
         - /MarkerArray1
         - /MarkerArray1/Topic1
+        - /Marker2
       Splitter Ratio: 0.5
     Tree Height: 707
   - Class: rviz_common/Selection
@@ -81,7 +81,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /corners
+        Value: /corners_marker
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -126,7 +126,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /orientated_corners
+        Value: /orientated_corners_marker
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
@@ -139,7 +139,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /anchor_points
+        Value: /anchor_points_marker
       Value: true
   Enabled: true
   Global Options:
@@ -187,7 +187,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.98460054397583
+      Distance: 3.4471797943115234
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -202,10 +202,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9347971081733704
+      Pitch: 0.7647972702980042
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 2.898568868637085
+      Yaw: 1.0085687637329102
     Saved: ~
 Window Geometry:
   Displays:

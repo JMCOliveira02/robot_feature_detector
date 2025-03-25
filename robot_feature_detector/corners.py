@@ -9,6 +9,7 @@ import numpy as np
 from skimage.measure import ransac, LineModelND
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
+from robot_msgs.msg import Feature, FeatureArray
 import time
 
 
@@ -34,19 +35,25 @@ class PointCloudSubscriber(Node):
 
         self.corner_publisher = self.create_publisher(
             Marker,
-            '/corners',
+            '/corners_marker',
             1
         )
 
         self.anchor_publisher = self.create_publisher(
             Marker,
-            '/anchor_points',
+            '/anchor_points_marker',
             1
         )
 
         self.corner_orientation_publisher = self.create_publisher(
             MarkerArray,
-            '/orientated_corners',
+            '/orientated_corners_marker',
+            1
+        )
+
+        self.feature_publisher = self.create_publisher(
+            FeatureArray,
+            '/corner',
             1
         )
 
@@ -109,8 +116,7 @@ class PointCloudSubscriber(Node):
         self.publish_corners()
         self.publish_anchors()
         self.publish_orientated_corners()
-
-    
+        self.publish_features()
 
     def extract_first_ransac_line(self, data_points, max_distance:int):
         inliers = []
@@ -272,6 +278,31 @@ class PointCloudSubscriber(Node):
                 except np.linalg.LinAlgError:
                     continue
         return np.array(intersection_points), np.array(lines_start), np.array(lines_end)
+
+
+    def publish_features(self):
+        feature_array = FeatureArray()
+        feature_array.features = []
+        for i in range(0, len(self.intersection_points)):
+            feature = Feature()
+            feature.position.x = float(self.intersection_points[i, 0])
+            feature.position.y = float(self.intersection_points[i, 1])
+            feature.position.z = float(0)
+            roll = float(0)
+            pitch = float(0)
+            yaw = float(self.corner_orientations[i])
+            q = R.from_euler('xyz', [roll, pitch, yaw]).as_quat()
+            feature.orientation.x = float(q[0])
+            feature.orientation.y = float(q[1])
+            feature.orientation.z = float(q[2])
+            feature.orientation.w = float(q[3])
+
+            feature.position_covariance = [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]
+            feature.orientation_covariance = [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]
+            
+            feature_array.features.append(feature)
+
+        self.feature_publisher.publish(feature_array)
 
     def publish_corners(self):
         marker = Marker()
