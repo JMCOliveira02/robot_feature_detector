@@ -57,6 +57,7 @@ class PointCloudSubscriber(Node):
             1
         )
 
+        self.previous_num_corners = 0
         self.timer = self.create_timer(1, self.extract_publish_corners)
 
     def plot_point_cloud_with_corners(self, intersection_points):
@@ -297,8 +298,10 @@ class PointCloudSubscriber(Node):
             feature.orientation.z = float(q[2])
             feature.orientation.w = float(q[3])
 
-            feature.position_covariance = [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]
-            feature.orientation_covariance = [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]
+            position_variance = float(0.1)
+            orientation_variance = float(0.1)
+            #feature.position_covariance = [[position_variance, 0.0, 0.0], [0.0, position_variance, 0.0], [0.0, 0.0, position_variance]]
+            #feature.orientation_covariance = [[orientation_variance, 0.0, 0.0], [0.0, orientation_variance, 0.0], [0.0, 0.0, orientation_variance]]
             
             feature_array.features.append(feature)
 
@@ -382,7 +385,21 @@ class PointCloudSubscriber(Node):
             marker.color.g = float(0)
             marker.color.b = float(0)
             markerArray.markers.append(marker)
+
             self.get_logger().info(f"markerArray size: {len(markerArray.markers)}")
+        
+        if len(self.intersection_points) < self.previous_num_corners:
+            for i in range(len(self.intersection_points), self.previous_num_corners):
+                marker = Marker()
+                marker.header.frame_id = "lidar2D"
+                marker.id = i
+                marker.ns = "orientations"
+                marker.type = Marker.ARROW
+                marker.action = Marker.DELETE
+                markerArray.markers.append(marker)
+
+
+        self.previous_num_corners = len(self.intersection_points)
         
         self.corner_orientation_publisher.publish(markerArray)
 
