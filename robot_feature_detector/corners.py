@@ -146,6 +146,7 @@ class PointCloudSubscriber(Node):
     gap_threshold = 0.3
     min_length = 0.5
 
+
     def extract_lines_from_point_cloud(self):
         models = []
         models_points_start = []
@@ -280,7 +281,6 @@ class PointCloudSubscriber(Node):
                     continue
         return np.array(intersection_points), np.array(lines_start), np.array(lines_end)
 
-
     def publish_features(self):
         feature_array = FeatureArray()
         feature_array.features = []
@@ -300,12 +300,12 @@ class PointCloudSubscriber(Node):
 
             position_variance = float(0.1)
             orientation_variance = float(0.1)
-            #feature.position_covariance = [[position_variance, 0.0, 0.0], [0.0, position_variance, 0.0], [0.0, 0.0, position_variance]]
-            #feature.orientation_covariance = [[orientation_variance, 0.0, 0.0], [0.0, orientation_variance, 0.0], [0.0, 0.0, orientation_variance]]
+            feature.position_covariance = [position_variance, 0.0, 0.0, 0.0, position_variance, 0.0, 0.0, 0.0, position_variance]
+            feature.orientation_covariance = [orientation_variance, 0.0, 0.0, 0.0, orientation_variance, 0.0, 0.0, 0.0, orientation_variance]
             
             feature_array.features.append(feature)
-
-        self.feature_publisher.publish(feature_array)
+        if len(self.intersection_points) > 0:
+            self.feature_publisher.publish(feature_array)
 
     def publish_corners(self):
         marker = Marker()
@@ -362,7 +362,7 @@ class PointCloudSubscriber(Node):
         for i in range(0, len(self.intersection_points)):
             self.get_logger().info(f"Corner {i} publishing")
             marker = Marker()
-            marker.header.frame_id = "lidar2D"
+            marker.header.frame_id = "base_link_real"
             marker.id = i
             marker.ns = "orientations"
             marker.type = Marker.ARROW
