@@ -29,7 +29,7 @@ class PointCloudSubscriber(Node):
 
         self.subscription = self.create_subscription(
             PointCloud2,
-            '/scan2D/point_cloud', 
+            '/scan/point_cloud', 
             self.listener_callback,
             1)
 
@@ -53,7 +53,7 @@ class PointCloudSubscriber(Node):
 
         self.feature_publisher = self.create_publisher(
             FeatureArray,
-            '/corner',
+            '/features',
             1
         )
 
@@ -76,12 +76,12 @@ class PointCloudSubscriber(Node):
         plt.show()
 
     def plot_point_cloud(self):
-        self.get_logger().info(f"Plotting point cloud...{self.point_cloud_numpy.shape}")
+        #self.get_logger().info(f"Plotting point cloud...{self.point_cloud_numpy.shape}")
 
         x = self.point_cloud_numpy[:, 0]
         y = self.point_cloud_numpy[:, 1]
-        self.get_logger().info(f"x: {x.shape}")
-        self.get_logger().info("Plotting point cloud...2")
+        #self.get_logger().info(f"x: {x.shape}")
+        #self.get_logger().info("Plotting point cloud...2")
         plt.figure(figsize=(8, 8))
         plt.scatter(x, y, s=5, c='blue', label='LiDAR Points')
         plt.axhline(0, color='black', linewidth=0.5)
@@ -99,15 +99,16 @@ class PointCloudSubscriber(Node):
     def listener_callback(self, point_cloud: PointCloud2):
 
         self.point_cloud_numpy = self.convert_point_cloud_msg_to_numpy(point_cloud)
+        self.get_logger().info("Received PCL!")
         #self.extract_publish_corners()
 
     def extract_publish_corners(self):
         while np.isnan(self.point_cloud_numpy).any() or np.isinf(self.point_cloud_numpy).any():
-            self.get_logger().warn("Point cloud contains NaN or Inf values!")
+            #self.get_logger().warn("Point cloud contains NaN or Inf values!")
             self.point_cloud_numpy = self.point_cloud_numpy[~np.isnan(self.point_cloud_numpy).any(axis=1)]
             self.point_cloud_numpy = self.point_cloud_numpy[~np.isinf(self.point_cloud_numpy).any(axis=1)]
 
-            self.get_logger().info("Point cloud is valid, running RANSAC...")
+            #self.get_logger().info("Point cloud is valid, running RANSAC...")
 
         #self.plot_point_cloud()
         
@@ -118,6 +119,9 @@ class PointCloudSubscriber(Node):
         self.publish_anchors()
         self.publish_orientated_corners()
         self.publish_features()
+        self.get_logger().info("Extract_publish_done")
+        #len_ = len(self.intersection_points)
+        #self.get_logger().info(len_)
 
     def extract_first_ransac_line(self, data_points, max_distance:int):
         inliers = []
@@ -138,12 +142,12 @@ class PointCloudSubscriber(Node):
         return np.array(results_inliers), np.array(results_inliers_removed), model_robust
 
     debug = False
-    min_samples = 5
+    min_samples = 3
 
-    max_distance = 0.01
-    iterations = 15
+    max_distance = 0.5
+    iterations = 30
 
-    gap_threshold = 0.3
+    gap_threshold = 1.5
     min_length = 0.5
 
 
@@ -153,7 +157,7 @@ class PointCloudSubscriber(Node):
         models_points_end = []
         for index in range(0, self.iterations):
 
-            self.get_logger().info(f"Pcl size: {len(self.point_cloud_numpy)}")
+            #self.get_logger().info(f"Pcl size: {len(self.point_cloud_numpy)}")
 
                 
             if (len(self.point_cloud_numpy) < self.min_samples):
@@ -172,18 +176,18 @@ class PointCloudSubscriber(Node):
             end_point = p0 + max_proj * direction
             length = np.linalg.norm(end_point - start_point)
             if self.debug:
-                print("TESTING LINE")
+                self.get_logger().info("TESTING LINE")
             if length > self.min_length:
                 if max_gap < self.gap_threshold:
                     models_points_start.append(start_point)
                     models_points_end.append(end_point)
                     models.append(model)
                 elif self.debug:
-                    print("GAP TOO BIG: ")
-                    print(max_gap)
+                    self.get_logger().info("GAP TOO BIG: ")
+                    #self.get_logger().info(max_gap)
             elif self.debug:
-                print("NOT LONG ENOUGH: ")
-                print(length)
+                self.get_logger().info("NOT LONG ENOUGH: ")
+                #self.get_logger().info(length)
         return models, models_points_start, models_points_end
     
     def dist(self, point_1, point_2):
@@ -236,7 +240,7 @@ class PointCloudSubscriber(Node):
         
         return orientations, anchor_points
 
-    endpoint_threshold = 0.2
+    endpoint_threshold = 1.8
 
     def is_point_close_to_endpoints(self, point, start, end):
         px, py = point
@@ -271,12 +275,12 @@ class PointCloudSubscriber(Node):
                         lines_start.append((models_points_start[i], models_points_start[j]))
                         lines_end.append((models_points_end[i], models_points_end[j]))
                     elif self.debug:
-                        print("INTERSECTION TOO FAR FROM ENDPOINTS")
-                        print(intersection)
-                        print(models_points_start[i])
-                        print(models_points_end[i])
-                        print(models_points_start[j])
-                        print(models_points_end[j])
+                        self.get_logger().info("INTERSECTION TOO FAR FROM ENDPOINTS")
+                        #print(intersection)
+                        #print(models_points_start[i])
+                        #print(models_points_end[i])
+                        #print(models_points_start[j])
+                        #print(models_points_end[j])
                 except np.linalg.LinAlgError:
                     continue
         return np.array(intersection_points), np.array(lines_start), np.array(lines_end)
@@ -284,28 +288,23 @@ class PointCloudSubscriber(Node):
     def publish_features(self):
         feature_array = FeatureArray()
         feature_array.features = []
+        feature_array.header.stamp = self.get_clock().now().to_msg()
         for i in range(0, len(self.intersection_points)):
             feature = Feature()
-            feature.position.x = float(self.intersection_points[i, 0])
-            feature.position.y = float(self.intersection_points[i, 1])
-            feature.position.z = float(0)
-            roll = float(0)
-            pitch = float(0)
+            feature.type = "corner"
+            feature.x = float(self.intersection_points[i, 0])
+            feature.y = float(self.intersection_points[i, 1])
             yaw = float(self.corner_orientations[i])
-            q = R.from_euler('xyz', [roll, pitch, yaw]).as_quat()
-            feature.orientation.x = float(q[0])
-            feature.orientation.y = float(q[1])
-            feature.orientation.z = float(q[2])
-            feature.orientation.w = float(q[3])
-
             position_variance = float(0.1)
             orientation_variance = float(0.1)
-            feature.position_covariance = [position_variance, 0.0, 0.0, 0.0, position_variance, 0.0, 0.0, 0.0, position_variance]
-            feature.orientation_covariance = [orientation_variance, 0.0, 0.0, 0.0, orientation_variance, 0.0, 0.0, 0.0, orientation_variance]
-            
+
+            feature.position_covariance = [position_variance, 0.0, 0.0, position_variance]
+            feature.orientation_variance = orientation_variance
             feature_array.features.append(feature)
+            
         if len(self.intersection_points) > 0:
             self.feature_publisher.publish(feature_array)
+            #self.get_logger().info("Publishing the features")
 
     def publish_corners(self):
         marker = Marker()
@@ -360,15 +359,15 @@ class PointCloudSubscriber(Node):
         markerArray.markers = []
 
         for i in range(0, len(self.intersection_points)):
-            self.get_logger().info(f"Corner {i} publishing")
+            #self.get_logger().info(f"Corner {i} publishing")
             marker = Marker()
-            marker.header.frame_id = "base_link_real"
+            marker.header.frame_id = "lidar2D"
             marker.id = i
             marker.ns = "orientations"
             marker.type = Marker.ARROW
             marker.action = Marker.ADD
             theta = self.corner_orientations[i]
-            self.get_logger().info(f"theta: {theta}")
+            #self.get_logger().info(f"theta: {theta}")
             q = R.from_euler('z', theta).as_quat()
             marker.pose.orientation.x = q[0]
             marker.pose.orientation.y = q[1]
@@ -377,16 +376,16 @@ class PointCloudSubscriber(Node):
             marker.pose.position.x = float(self.intersection_points[i, 0])
             marker.pose.position.y = float(self.intersection_points[i, 1])
             marker.pose.position.z = float(0)
-            marker.scale.x = float(0.1)
-            marker.scale.y = float(0.03)
-            marker.scale.z = float(0.03)
+            marker.scale.x = float(0.5)
+            marker.scale.y = float(0.09)
+            marker.scale.z = float(0.09)
             marker.color.a = float(1)
             marker.color.r = float(1)
             marker.color.g = float(0)
             marker.color.b = float(0)
             markerArray.markers.append(marker)
 
-            self.get_logger().info(f"markerArray size: {len(markerArray.markers)}")
+            #self.get_logger().info(f"markerArray size: {len(markerArray.markers)}")
         
         if len(self.intersection_points) < self.previous_num_corners:
             for i in range(len(self.intersection_points), self.previous_num_corners):

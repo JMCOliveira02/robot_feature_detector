@@ -8,19 +8,23 @@ from webots_ros2_driver.webots_controller import WebotsController
 
 
 def generate_launch_description():
-    world_package_dir = get_package_share_directory('robot_localization_package')
+    world_package_dir = get_package_share_directory('robot_worlds')
     this_package_dir = get_package_share_directory('robot_feature_detector')
-    robot_description_path = os.path.join(world_package_dir, 'resource', 'my_robot.urdf')
+    robot_description_path = os.path.join(world_package_dir, 'urdf', 'robot.urdf')
+    world = "iilab"
+    world_path = "worlds/" + world + "/" + world + ".wbt"
+    map_image_path = os.path.join(world_package_dir, 'maps', world, world + '.yaml')
+    #map_features_path = os.path.join(world, 'feature_maps', world + '.yaml')
 
     my_robot_driver = WebotsController(
-        robot_name='my_robot',
+        robot_name='robot',
         parameters=[
             {'robot_description': robot_description_path},
         ]
     )
 
     webots = WebotsLauncher(
-        world=os.path.join(world_package_dir, 'worlds', 'epuck_world.wbt')
+        world=os.path.join(world_package_dir, world_path)
     )
 
     rviz = Node(
@@ -57,9 +61,24 @@ def generate_launch_description():
         package="tf2_ros",
         executable="static_transform_publisher",
         name="map_to_odom_broadcaster",
-        arguments=["0", "0", "0", "0", "0", "0", "base_link", "lidar2D"]
+        arguments=["0", "0", "0", "0", "0", "0", "base_footprint", "lidar2D"]
     )
 
+    map_server = Node(
+        package='nav2_map_server',
+        executable='map_server',
+        name='map_server',
+        parameters=[{'yaml_filename': map_image_path}],
+        output='screen'
+    )
+    ## Map server lifecycle manager
+    lifecycle_manager = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_map',
+        parameters=[{'autostart': True, 'node_names': ['map_server']}],
+        output='screen'
+    )
 
     return LaunchDescription([
         corner_detector,
@@ -68,5 +87,7 @@ def generate_launch_description():
         tf_static_odom,
         tf_static_lidar,
         teleop,
-        rviz
+        rviz,
+        map_server,
+        lifecycle_manager
     ])
