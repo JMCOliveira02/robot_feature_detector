@@ -25,6 +25,8 @@ class Corner3DDetector(Node):
 
         self.corner_orientation_publisher = self.create_publisher(MarkerArray, "/corner_orientations", 1)
 
+        self.feature_publisher = self.create_publisher(FeatureArray, "features", 1)
+
         #
         self.WALL_COLOR = [0, 0, 255] 
         self.CEILING_COLOR = [0, 255, 0] 
@@ -38,21 +40,20 @@ class Corner3DDetector(Node):
         self.previous_num_corners = 0
     
     #
-    pcl_counter = 0
     def point_cloud_callback(self, msg):
         """Process incoming point cloud message"""
         self.np_wall, self.np_ceiling, _ = separate_cloud(msg, self.WALL_COLOR, self.CEILING_COLOR, self.FLOOR_COLOR, self.COLOR_TOLERANCE)
-        self.get_logger().info(f"{self.pcl_counter} -> Wall: {len(self.np_wall)} points, Ceiling: {len(self.np_ceiling)}")
-        self.pcl_counter += 1
+        #self.get_logger().info(f"{self.pcl_counter} -> Wall: {len(self.np_wall)} points, Ceiling: {len(self.np_ceiling)}")
     
     #
     def timer_callback(self):
         self.wall_pcl = numpy_to_o3d_cloud(self.np_wall); self.ceiling_pcl = numpy_to_o3d_cloud(self.np_ceiling)
         wall_planes, ceiling_planes, self.corners, self.thetas, duration = extract_corners(self.wall_pcl, self.ceiling_pcl)
-        self.get_logger().info(f"Found {len(self.corners)} corners from {len(wall_planes)} walls and {len(ceiling_planes)} ceilings in {duration} seconds!")
-        if len(self.thetas) > 0: self.get_logger().info(f"Orientation of the 1st corner: {self.thetas[0] * 180 / np.pi}")
+        #self.get_logger().info(f"Found {len(self.corners)} corners from {len(wall_planes)} walls and {len(ceiling_planes)} ceilings in {duration} seconds!")
+        #if len(self.thetas) > 0: self.get_logger().info(f"Orientation of the 1st corner: {self.thetas[0] * 180 / np.pi}")
         self.publish_3D_corners_rviz()
         self.publish_orientated_corners_rviz()
+        self.publish_corner_features()
     
     #
     def publish_3D_corners_rviz(self):
@@ -135,12 +136,13 @@ class Corner3DDetector(Node):
         for i in range(0, len(self.corners)):
             feature = Feature()
             feature.type = "corner"
-            feature.x = float(self.corners[i, 0])
-            feature.y = float(self.corners[i, 1])
-            yaw = float(self.thetas[i])
             position_variance = float(0.1)
             orientation_variance = float(0.1)
 
+            feature.x = float(self.corners[i][0])
+            feature.y = float(self.corners[i][1])
+            feature.theta = float(self.thetas[i])
+            feature.confidence = 1.0
             feature.position_covariance = [position_variance, 0.0, 0.0, position_variance]
             feature.orientation_variance = orientation_variance
             feature_array.features.append(feature)

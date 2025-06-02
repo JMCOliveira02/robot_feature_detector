@@ -294,10 +294,10 @@ class PointCloudSubscriber(Node):
             feature.type = "corner"
             feature.x = float(self.intersection_points[i, 0])
             feature.y = float(self.intersection_points[i, 1])
-            yaw = float(self.corner_orientations[i])
+            feature.theta = float(self.corner_orientations[i])
+            feature.confidence = 1.0
             position_variance = float(0.1)
             orientation_variance = float(0.1)
-
             feature.position_covariance = [position_variance, 0.0, 0.0, position_variance]
             feature.orientation_variance = orientation_variance
             feature_array.features.append(feature)
