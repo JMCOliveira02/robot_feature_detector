@@ -24,7 +24,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'corners = robot_feature_detector.corners:main'
+            'corners = robot_feature_detector.corners:main',
+            'corners_3D = robot_feature_detector.corners3D:main'
         ],
     },
 )
